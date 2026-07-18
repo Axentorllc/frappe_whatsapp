@@ -34,6 +34,12 @@ class TestGetWhatsAppAccount(IntegrationTestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
+        cls._prior_default_incoming = frappe.db.get_value(
+            "WhatsApp Account", {"is_default_incoming": 1}, "name"
+        )
+        cls._prior_default_outgoing = frappe.db.get_value(
+            "WhatsApp Account", {"is_default_outgoing": 1}, "name"
+        )
         cls._ensure_test_accounts()
 
     @classmethod
@@ -54,6 +60,17 @@ class TestGetWhatsAppAccount(IntegrationTestCase):
             })
             account.insert(ignore_permissions=True)
             frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture must be visible to later queries
+
+    @classmethod
+    def tearDownClass(cls):
+        if frappe.db.exists("WhatsApp Account", "Test Utils Account"):
+            frappe.delete_doc("WhatsApp Account", "Test Utils Account", force=True, ignore_permissions=True)
+        if cls._prior_default_incoming and frappe.db.exists("WhatsApp Account", cls._prior_default_incoming):
+            frappe.db.set_value("WhatsApp Account", cls._prior_default_incoming, "is_default_incoming", 1)
+        if cls._prior_default_outgoing and frappe.db.exists("WhatsApp Account", cls._prior_default_outgoing):
+            frappe.db.set_value("WhatsApp Account", cls._prior_default_outgoing, "is_default_outgoing", 1)
+        frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture cleanup
+        super().tearDownClass()
 
     def setUp(self):
         # Clear ALL defaults then set ours (db.set_value bypasses on_update hooks)
@@ -91,6 +108,17 @@ class TestGetWhatsAppAccount(IntegrationTestCase):
 
 class TestGetNotificationsMap(IntegrationTestCase):
     """Tests for get_notifications_map utility."""
+
+    @classmethod
+    def tearDownClass(cls):
+        if frappe.db.exists("WhatsApp Notification", "Test Utils Map Notif"):
+            frappe.delete_doc("WhatsApp Notification", "Test Utils Map Notif", force=True)
+        if frappe.db.exists("WhatsApp Templates", "test_utils_map_template-en"):
+            frappe.db.delete("WhatsApp Templates", {"name": "test_utils_map_template-en"})
+        if frappe.db.exists("WhatsApp Account", "Test Utils Map Account"):
+            frappe.delete_doc("WhatsApp Account", "Test Utils Map Account", force=True, ignore_permissions=True)
+        frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture cleanup
+        super().tearDownClass()
 
     def test_returns_dict(self):
         """Test that notifications map returns a dictionary."""

@@ -14,6 +14,12 @@ class TestWhatsAppTemplates(IntegrationTestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
+        cls._prior_default_incoming = frappe.db.get_value(
+            "WhatsApp Account", {"is_default_incoming": 1}, "name"
+        )
+        cls._prior_default_outgoing = frappe.db.get_value(
+            "WhatsApp Account", {"is_default_outgoing": 1}, "name"
+        )
         cls._ensure_test_account()
 
     @classmethod
@@ -29,17 +35,27 @@ class TestWhatsAppTemplates(IntegrationTestCase):
                 "business_id": "tmpl_test_business_id",
                 "app_id": "tmpl_test_app_id",
                 "webhook_verify_token": "tmpl_test_verify_token",
-                "is_default_incoming": 1,
-                "is_default_outgoing": 1,
+                "is_default_incoming": 0,
+                "is_default_outgoing": 0,
             })
             account.insert(ignore_permissions=True)
             frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture must be visible to later queries
 
+    @classmethod
+    def tearDownClass(cls):
+        if frappe.db.exists("WhatsApp Account", "Test WA Tmpl Account"):
+            frappe.delete_doc("WhatsApp Account", "Test WA Tmpl Account", force=True, ignore_permissions=True)
+        if cls._prior_default_incoming and frappe.db.exists("WhatsApp Account", cls._prior_default_incoming):
+            frappe.db.set_value("WhatsApp Account", cls._prior_default_incoming, "is_default_incoming", 1)
+        if cls._prior_default_outgoing and frappe.db.exists("WhatsApp Account", cls._prior_default_outgoing):
+            frappe.db.set_value("WhatsApp Account", cls._prior_default_outgoing, "is_default_outgoing", 1)
+        frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture cleanup
+        super().tearDownClass()
+
     def setUp(self):
-        # Set password within each test's transaction scope
+        # Set password and claim defaults — test_set_whatsapp_account_default verifies auto-selection.
         from frappe.utils.password import set_encrypted_password
         set_encrypted_password("WhatsApp Account", "Test WA Tmpl Account", "test_tmpl_token", "token")
-        # Clear ALL defaults then set ours (db.set_value bypasses on_update hooks)
         frappe.db.sql("UPDATE `tabWhatsApp Account` SET is_default_outgoing=0, is_default_incoming=0")
         frappe.db.set_value("WhatsApp Account", "Test WA Tmpl Account", {
             "is_default_outgoing": 1,

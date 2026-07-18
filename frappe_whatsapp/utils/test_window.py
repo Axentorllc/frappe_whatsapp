@@ -30,6 +30,13 @@ class TestWindowPrimitive(IntegrationTestCase):
             acc.insert(ignore_permissions=True)
             frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture must be visible to later queries
 
+    @classmethod
+    def tearDownClass(cls):
+        if frappe.db.exists("WhatsApp Account", "Test WA Window Account"):
+            frappe.delete_doc("WhatsApp Account", "Test WA Window Account", force=True, ignore_permissions=True)
+            frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture cleanup
+        super().tearDownClass()
+
     def _create_inbound(self, from_number, created_at):
         """Insert a minimal Incoming message with a specific creation timestamp."""
         msg = frappe.get_doc({

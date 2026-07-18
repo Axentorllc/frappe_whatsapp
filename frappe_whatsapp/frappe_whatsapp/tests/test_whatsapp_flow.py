@@ -29,6 +29,9 @@ class TestWhatsAppFlow(FrappeTestCase):
         # Delete test flows
         for flow in frappe.get_all("WhatsApp Flow", filters={"flow_name": ["like", "Test%"]}):
             frappe.delete_doc("WhatsApp Flow", flow.name, force=True)
+        # Delete the test account created in setUp.
+        if frappe.db.exists("WhatsApp Account", "Test Account"):
+            frappe.delete_doc("WhatsApp Account", "Test Account", force=True, ignore_permissions=True)
 
     def create_test_flow(self, flow_name, screens_data, fields_data):
         """Helper to create a test flow."""

@@ -38,11 +38,18 @@ class TestBulkMessagingUtils(IntegrationTestCase):
                 "business_id": "bulkutil_test_business_id",
                 "app_id": "bulkutil_test_app_id",
                 "webhook_verify_token": "bulkutil_test_verify_token",
-                "is_default_incoming": 1,
-                "is_default_outgoing": 1,
+                "is_default_incoming": 0,
+                "is_default_outgoing": 0,
             })
             account.insert(ignore_permissions=True)
             frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture must be visible to later queries
+
+    @classmethod
+    def tearDownClass(cls):
+        if frappe.db.exists("WhatsApp Account", "Test WA BulkUtil Account"):
+            frappe.delete_doc("WhatsApp Account", "Test WA BulkUtil Account", force=True, ignore_permissions=True)
+            frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture cleanup
+        super().tearDownClass()
 
     @classmethod
     def _ensure_test_template(cls):
@@ -75,12 +82,6 @@ class TestBulkMessagingUtils(IntegrationTestCase):
         # Set password within each test's transaction scope
         from frappe.utils.password import set_encrypted_password
         set_encrypted_password("WhatsApp Account", "Test WA BulkUtil Account", "test_bulkutil_token", "token")
-        # Clear ALL defaults then set ours (db.set_value bypasses on_update hooks)
-        frappe.db.sql("UPDATE `tabWhatsApp Account` SET is_default_outgoing=0, is_default_incoming=0")
-        frappe.db.set_value("WhatsApp Account", "Test WA BulkUtil Account", {
-            "is_default_outgoing": 1,
-            "is_default_incoming": 1,
-        })
 
     def tearDown(self):
         for name in frappe.get_all("Bulk WhatsApp Message", filters={"title": ["like", "Test BulkUtil%"]}, pluck="name"):

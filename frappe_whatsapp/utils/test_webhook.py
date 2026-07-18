@@ -59,13 +59,20 @@ class TestWebhookHelpers(IntegrationTestCase):
                 "business_id": "webhook_test_business_id",
                 "app_id": "webhook_test_app_id",
                 "webhook_verify_token": "webhook_test_verify_token",
-                "is_default_incoming": 1,
-                "is_default_outgoing": 1,
+                "is_default_incoming": 0,
+                "is_default_outgoing": 0,
             })
             account.insert(ignore_permissions=True)
             from frappe.utils.password import set_encrypted_password
             set_encrypted_password("WhatsApp Account", account.name, "test_webhook_token", "token")
             frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture must be visible to later queries
+
+    @classmethod
+    def tearDownClass(cls):
+        if frappe.db.exists("WhatsApp Account", "Test WA Webhook Account"):
+            frappe.delete_doc("WhatsApp Account", "Test WA Webhook Account", force=True, ignore_permissions=True)
+            frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture cleanup
+        super().tearDownClass()
 
     def setUp(self):
         # Set password within each test's transaction scope
@@ -193,24 +200,25 @@ class TestWebhookEndpoint(IntegrationTestCase):
                 "business_id": "webhook_ep_business_id",
                 "app_id": "webhook_ep_app_id",
                 "webhook_verify_token": "Test WA Webhook EP Account",
-                "is_default_incoming": 1,
-                "is_default_outgoing": 1,
+                "is_default_incoming": 0,
+                "is_default_outgoing": 0,
             })
             account.insert(ignore_permissions=True)
             from frappe.utils.password import set_encrypted_password
             set_encrypted_password("WhatsApp Account", account.name, "ep_token", "token")
             frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture must be visible to later queries
 
+    @classmethod
+    def tearDownClass(cls):
+        if frappe.db.exists("WhatsApp Account", "Test WA Webhook EP Account"):
+            frappe.delete_doc("WhatsApp Account", "Test WA Webhook EP Account", force=True, ignore_permissions=True)
+            frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture cleanup
+        super().tearDownClass()
+
     def setUp(self):
         # Set password within each test's transaction scope
         from frappe.utils.password import set_encrypted_password
         set_encrypted_password("WhatsApp Account", "Test WA Webhook EP Account", "ep_token", "token")
-        # Clear ALL defaults then set ours (db.set_value bypasses on_update hooks)
-        frappe.db.sql("UPDATE `tabWhatsApp Account` SET is_default_outgoing=0, is_default_incoming=0")
-        frappe.db.set_value("WhatsApp Account", "Test WA Webhook EP Account", {
-            "is_default_outgoing": 1,
-            "is_default_incoming": 1,
-        })
 
     def tearDown(self):
         for name in frappe.get_all("WhatsApp Message", filters={"message_id": ["like", "wamid.webhook_ep_%"]}, pluck="name"):
@@ -528,6 +536,13 @@ class TestMessageDedup(IntegrationTestCase):
         super().setUpClass()
         _ensure_dedup_test_account()
 
+    @classmethod
+    def tearDownClass(cls):
+        if frappe.db.exists("WhatsApp Account", "Test WA Dedup Account"):
+            frappe.delete_doc("WhatsApp Account", "Test WA Dedup Account", force=True, ignore_permissions=True)
+            frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture cleanup
+        super().tearDownClass()
+
     def tearDown(self):
         frappe.db.sql(
             "DELETE FROM `tabWhatsApp Message` WHERE message_id LIKE 'wamid.DEDUP%'"
@@ -601,6 +616,13 @@ class TestHMACVerification(IntegrationTestCase):
             acc.insert(ignore_permissions=True)
             frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture must be visible to later queries
 
+    @classmethod
+    def tearDownClass(cls):
+        if frappe.db.exists("WhatsApp Account", "Test WA HMAC Account"):
+            frappe.delete_doc("WhatsApp Account", "Test WA HMAC Account", force=True, ignore_permissions=True)
+            frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture cleanup
+        super().tearDownClass()
+
     def _clear_secret(self):
         frappe.db.sql(
             "DELETE FROM `__Auth` WHERE doctype='WhatsApp Account' "
@@ -659,6 +681,13 @@ class TestNewInboundTypes(IntegrationTestCase):
     def setUpClass(cls):
         super().setUpClass()
         _ensure_dedup_test_account()
+
+    @classmethod
+    def tearDownClass(cls):
+        if frappe.db.exists("WhatsApp Account", "Test WA Dedup Account"):
+            frappe.delete_doc("WhatsApp Account", "Test WA Dedup Account", force=True, ignore_permissions=True)
+            frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture cleanup
+        super().tearDownClass()
 
     def tearDown(self):
         frappe.db.sql(
@@ -752,6 +781,13 @@ class TestMediaHardening(IntegrationTestCase):
         super().setUpClass()
         _ensure_dedup_test_account()
 
+    @classmethod
+    def tearDownClass(cls):
+        if frappe.db.exists("WhatsApp Account", "Test WA Dedup Account"):
+            frappe.delete_doc("WhatsApp Account", "Test WA Dedup Account", force=True, ignore_permissions=True)
+            frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture cleanup
+        super().tearDownClass()
+
     def tearDown(self):
         frappe.db.sql(
             "DELETE FROM `tabWhatsApp Message` WHERE message_id LIKE 'wamid.MEDIA%'"
@@ -843,13 +879,20 @@ class TestFailedStatusSurfacing(IntegrationTestCase):
                 "business_id": "webhook_test_business_id",
                 "app_id": "webhook_test_app_id",
                 "webhook_verify_token": "webhook_test_verify_token",
-                "is_default_incoming": 1,
-                "is_default_outgoing": 1,
+                "is_default_incoming": 0,
+                "is_default_outgoing": 0,
             })
             account.insert(ignore_permissions=True)
             from frappe.utils.password import set_encrypted_password
             set_encrypted_password("WhatsApp Account", account.name, "test_webhook_token", "token")
             frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture
+
+    @classmethod
+    def tearDownClass(cls):
+        if frappe.db.exists("WhatsApp Account", "Test WA Webhook Account"):
+            frappe.delete_doc("WhatsApp Account", "Test WA Webhook Account", force=True, ignore_permissions=True)
+            frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture cleanup
+        super().tearDownClass()
 
     def _make_outgoing(self, message_id):
         msg = frappe.get_doc({
