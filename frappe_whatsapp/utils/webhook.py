@@ -75,6 +75,12 @@ def post():
 	if messages:
 		for message in messages:
 			message_type = message['type']
+			mid = message.get('id')
+			if mid and frappe.db.exists("WhatsApp Message", {"message_id": mid}):
+				frappe.logger("frappe_whatsapp").debug(
+					f"inbound: duplicate message_id={mid!r}; skipping"
+				)
+				continue
 			is_reply = True if message.get('context') and 'forwarded' not in message.get('context') else False
 			reply_to_message_id = message['context']['id'] if is_reply else None
 			if message_type == 'text':

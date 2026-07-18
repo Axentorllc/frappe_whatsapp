@@ -48,10 +48,11 @@ class TestWhatsAppMessage(IntegrationTestCase):
         })
 
     def tearDown(self):
-        for name in frappe.get_all("WhatsApp Message", filters={"to": ["like", "9199%"]}, pluck="name"):
-            frappe.delete_doc("WhatsApp Message", name, force=True)
-        for name in frappe.get_all("WhatsApp Message", filters={"from": ["like", "9199%"]}, pluck="name"):
-            frappe.delete_doc("WhatsApp Message", name, force=True)
+        for pattern in ("9199%", "+9199%"):
+            for name in frappe.get_all("WhatsApp Message", filters={"to": ["like", pattern]}, pluck="name"):
+                frappe.delete_doc("WhatsApp Message", name, force=True)
+            for name in frappe.get_all("WhatsApp Message", filters={"from": ["like", pattern]}, pluck="name"):
+                frappe.delete_doc("WhatsApp Message", name, force=True)
         for name in frappe.get_all("WhatsApp Profiles", filters={"number": ["like", "9199%"]}, pluck="name"):
             frappe.delete_doc("WhatsApp Profiles", name, force=True)
         frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture must be visible to later queries

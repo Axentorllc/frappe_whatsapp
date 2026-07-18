@@ -36,6 +36,7 @@
   "section_break_flow_response",
   "flow_response",
   "section_break_iyjf",
+  "referral",
   "is_reply",
   "reply_to_message_id",
   "section_break_dhba",
@@ -142,7 +143,7 @@
    "fieldname": "content_type",
    "fieldtype": "Select",
    "label": "Content Type",
-   "options": "text\ndocument\nimage\nvideo\naudio\nflow\nreaction\nlocation\ncontact\nbutton\ninteractive\norder",
+   "options": "text\ndocument\nimage\nvideo\naudio\nflow\nreaction\nlocation\ncontact\nbutton\ninteractive\norder\nsticker\ncontacts\nunsupported",
    "reqd": 1
   },
   {
@@ -163,6 +164,12 @@
   {
    "fieldname": "section_break_iyjf",
    "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "referral",
+   "fieldtype": "Small Text",
+   "label": "Referral",
+   "read_only": 1
   },
   {
    "default": "0",

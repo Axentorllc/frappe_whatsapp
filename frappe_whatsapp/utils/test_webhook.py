@@ -494,3 +494,75 @@ class TestUnknownStatusNoOp(IntegrationTestCase):
         }
         # Must not raise — previously crashed with PermissionError on get_doc(None)
         update_message_status(data)
+
+
+class TestMessageDedup(IntegrationTestCase):
+    """Feature 2: same payload twice must create only one WhatsApp Message."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        if not frappe.db.exists("WhatsApp Account", "Test WA Dedup Account"):
+            acc = frappe.get_doc({
+                "doctype": "WhatsApp Account",
+                "account_name": "Test WA Dedup Account",
+                "status": "Active",
+                "url": "https://graph.facebook.com",
+                "version": "v17.0",
+                "phone_id": "dedup_test_phone_id",
+                "business_id": "dedup_biz_id",
+                "app_id": "dedup_app_id",
+                "webhook_verify_token": "dedup_verify_token",
+                "is_default_incoming": 0,
+                "is_default_outgoing": 0,
+            })
+            acc.insert(ignore_permissions=True)
+            from frappe.utils.password import set_encrypted_password
+            set_encrypted_password("WhatsApp Account", acc.name, "dedup_token", "token")
+            frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture must be visible to later queries
+
+    def tearDown(self):
+        frappe.db.sql(
+            "DELETE FROM `tabWhatsApp Message` WHERE message_id LIKE 'wamid.DEDUP%'"
+        )
+        frappe.db.sql(
+            "DELETE FROM `tabWhatsApp Notification Log` WHERE template='Webhook'"
+        )
+        frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture must be visible to later queries
+
+    def _dedup_request(self):
+        mock_request = MagicMock()
+        mock_request.method = "POST"
+        mock_request.headers = {}
+        mock_request.get_data.return_value = b""
+        return mock_request
+
+    def test_duplicate_payload_creates_one_message(self):
+        from frappe_whatsapp.utils.webhook import webhook
+
+        payload = {
+            "entry": [{
+                "changes": [{
+                    "value": {
+                        "metadata": {"phone_number_id": "dedup_test_phone_id"},
+                        "contacts": [{"profile": {"name": "Test User"}}],
+                        "messages": [{
+                            "from": "201000000001",
+                            "id": "wamid.DEDUP.TEST.001",
+                            "type": "text",
+                            "text": {"body": "Dedup test message"},
+                        }]
+                    }
+                }]
+            }]
+        }
+
+        for _iteration in range(2):
+            frappe.local.form_dict = frappe._dict(payload)
+            with patch("frappe_whatsapp.utils.webhook.frappe.request", self._dedup_request()):
+                webhook()
+
+        count = frappe.db.count(
+            "WhatsApp Message", filters={"message_id": "wamid.DEDUP.TEST.001"}
+        )
+        self.assertEqual(count, 1, "Duplicate webhook must not create a second message")
