@@ -1,8 +1,10 @@
 """Webhook."""
 import frappe
+import hmac
 import json
 import requests
 import time
+from hashlib import sha256
 from frappe import _
 from werkzeug.wrappers import Response
 import frappe.utils
@@ -35,8 +37,59 @@ def get():
 
 	return Response(hub_challenge, status=200)
 
+
+def _verify_webhook_signature():
+	"""Verify X-Hub-Signature-256 HMAC if an app_secret is configured.
+
+	Returns True when no account has an app_secret (backwards-compatible skip)
+	or when the signature is present and matches. Returns False when a secret
+	is configured but the signature is absent or wrong.
+	"""
+	app_secret = _get_webhook_app_secret()
+	if not app_secret:
+		return True  # No secret configured — skip check (backwards compat)
+
+	signature_header = frappe.request.headers.get("X-Hub-Signature-256", "")
+	if not signature_header.startswith("sha256="):
+		return False  # Secret configured but signature absent/malformed
+
+	expected = "sha256=" + hmac.new(
+		app_secret.encode() if isinstance(app_secret, str) else app_secret,
+		frappe.request.get_data(),
+		sha256,
+	).hexdigest()
+	return hmac.compare_digest(expected, signature_header)
+
+
+def _get_webhook_app_secret():
+	"""Return the app_secret of the first active WhatsApp Account that has one.
+
+	Returns None when no active account has a secret (verification skipped —
+	backwards compatible).
+	"""
+	from frappe.utils.password import get_decrypted_password
+
+	accounts = frappe.get_all(
+		"WhatsApp Account",
+		filters={"status": "Active"},
+		pluck="name",
+	)
+	for account_name in accounts:
+		secret = get_decrypted_password(
+			"WhatsApp Account", account_name, "app_secret", raise_exception=False
+		)
+		if secret:
+			return secret
+	return None
+
+
 def post():
 	"""Post."""
+	# HMAC verification must happen first, over the raw body, before any
+	# processing or logging — a rejected request must not touch the DB.
+	if not _verify_webhook_signature():
+		return Response("Forbidden", status=403)
+
 	data = frappe.local.form_dict
 	frappe.get_doc({
 		"doctype": "WhatsApp Notification Log",

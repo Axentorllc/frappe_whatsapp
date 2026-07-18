@@ -1,7 +1,9 @@
 # Copyright (c) 2025, Shridhar Patil and Contributors
 # See license.txt
 
+import hmac as _hmac
 import json
+from hashlib import sha256 as _sha256
 from unittest.mock import patch, MagicMock, PropertyMock
 
 import frappe
@@ -566,3 +568,77 @@ class TestMessageDedup(IntegrationTestCase):
             "WhatsApp Message", filters={"message_id": "wamid.DEDUP.TEST.001"}
         )
         self.assertEqual(count, 1, "Duplicate webhook must not create a second message")
+
+
+class TestHMACVerification(IntegrationTestCase):
+    """Feature 3: X-Hub-Signature-256 verification."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        if not frappe.db.exists("WhatsApp Account", "Test WA HMAC Account"):
+            acc = frappe.get_doc({
+                "doctype": "WhatsApp Account",
+                "account_name": "Test WA HMAC Account",
+                "status": "Active",
+                "url": "https://graph.facebook.com",
+                "version": "v17.0",
+                "phone_id": "hmac_test_phone_id",
+                "business_id": "hmac_biz_id",
+                "app_id": "hmac_app_id",
+                "webhook_verify_token": "hmac_verify_token",
+                "is_default_incoming": 0,
+                "is_default_outgoing": 0,
+            })
+            acc.insert(ignore_permissions=True)
+            frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture must be visible to later queries
+
+    def _clear_secret(self):
+        frappe.db.sql(
+            "DELETE FROM `__Auth` WHERE doctype='WhatsApp Account' "
+            "AND name='Test WA HMAC Account' AND fieldname='app_secret'"
+        )
+        frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture must be visible to later queries
+
+    def test_no_secret_configured_skips_check(self):
+        """When no account has app_secret, all requests pass."""
+        from frappe_whatsapp.utils.webhook import _verify_webhook_signature
+        mock_request = MagicMock()
+        mock_request.headers = {}
+        mock_request.get_data.return_value = b"test"
+        with patch("frappe_whatsapp.utils.webhook.frappe.request", mock_request):
+            self.assertTrue(_verify_webhook_signature())
+
+    def test_valid_signature_passes(self):
+        """Valid HMAC passes when secret is configured."""
+        from frappe.utils.password import set_encrypted_password
+        from frappe_whatsapp.utils.webhook import _verify_webhook_signature
+        set_encrypted_password("WhatsApp Account", "Test WA HMAC Account", "test_secret_key", "app_secret")
+        frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture must be visible to later queries
+
+        body = b'{"test": "payload"}'
+        sig = "sha256=" + _hmac.new(b"test_secret_key", body, _sha256).hexdigest()
+        mock_request = MagicMock()
+        mock_request.headers = {"X-Hub-Signature-256": sig}
+        mock_request.get_data.return_value = body
+        try:
+            with patch("frappe_whatsapp.utils.webhook.frappe.request", mock_request):
+                self.assertTrue(_verify_webhook_signature())
+        finally:
+            self._clear_secret()
+
+    def test_invalid_signature_rejects(self):
+        """Wrong HMAC returns False."""
+        from frappe.utils.password import set_encrypted_password
+        from frappe_whatsapp.utils.webhook import _verify_webhook_signature
+        set_encrypted_password("WhatsApp Account", "Test WA HMAC Account", "test_secret_key2", "app_secret")
+        frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture must be visible to later queries
+
+        mock_request = MagicMock()
+        mock_request.headers = {"X-Hub-Signature-256": "sha256=wrongsignature"}
+        mock_request.get_data.return_value = b'{"test": "payload"}'
+        try:
+            with patch("frappe_whatsapp.utils.webhook.frappe.request", mock_request):
+                self.assertFalse(_verify_webhook_signature())
+        finally:
+            self._clear_secret()

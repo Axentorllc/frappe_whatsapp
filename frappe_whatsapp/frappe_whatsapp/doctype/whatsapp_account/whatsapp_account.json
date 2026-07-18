@@ -11,6 +11,7 @@
   "account_name",
   "status",
   "token",
+  "app_secret",
   "url",
   "version",
   "webhook_verify_token",
@@ -28,6 +29,11 @@
    "fieldtype": "Password",
    "label": "Token",
    "length": 300
+  },
+  {
+   "fieldname": "app_secret",
+   "fieldtype": "Password",
+   "label": "App Secret"
   },
   {
    "fieldname": "url",
