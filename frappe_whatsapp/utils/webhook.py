@@ -209,8 +209,9 @@ def post():
 				if message.get("referral"):
 					doc.referral = json.dumps(message["referral"])
 				doc.insert(ignore_permissions=True)
+				_publish_inbound_event(doc)
 			elif message_type == 'reaction':
-				frappe.get_doc({
+				doc = frappe.get_doc({
 					"doctype": "WhatsApp Message",
 					"type": "Incoming",
 					"from": message['from'],
@@ -221,13 +222,14 @@ def post():
 					"profile_name":sender_profile_name,
 					"whatsapp_account":whatsapp_account.name
 				}).insert(ignore_permissions=True)
+				_publish_inbound_event(doc)
 			elif message_type == 'interactive':
 				interactive_data = message['interactive']
 				interactive_type = interactive_data.get('type')
 
 				# Handle button reply
 				if interactive_type == 'button_reply':
-					frappe.get_doc({
+					doc = frappe.get_doc({
 						"doctype": "WhatsApp Message",
 						"type": "Incoming",
 						"from": message['from'],
@@ -239,9 +241,10 @@ def post():
 						"profile_name": sender_profile_name,
 						"whatsapp_account": whatsapp_account.name
 					}).insert(ignore_permissions=True)
+					_publish_inbound_event(doc)
 				# Handle list reply
 				elif interactive_type == 'list_reply':
-					frappe.get_doc({
+					doc = frappe.get_doc({
 						"doctype": "WhatsApp Message",
 						"type": "Incoming",
 						"from": message['from'],
@@ -253,6 +256,7 @@ def post():
 						"profile_name": sender_profile_name,
 						"whatsapp_account": whatsapp_account.name
 					}).insert(ignore_permissions=True)
+					_publish_inbound_event(doc)
 				# Handle WhatsApp Flows (nfm_reply)
 				elif interactive_type == 'nfm_reply':
 					nfm_reply = interactive_data['nfm_reply']
@@ -284,6 +288,7 @@ def post():
 						"profile_name": sender_profile_name,
 						"whatsapp_account": whatsapp_account.name
 					}).insert(ignore_permissions=True)
+					_publish_inbound_event(msg_doc)
 
 					# Publish realtime event for flow response
 					frappe.publish_realtime(  # nosemgrep: frappe-realtime-pick-room -- intentional site-wide fan-out for chat UIs (whatsapp_chat companion app) listening for inbound flow responses
@@ -300,7 +305,7 @@ def post():
 				order_data = message['order']
 
 				# Inject the raw data into product_catalog_json
-				frappe.get_doc({
+				doc = frappe.get_doc({
 					"doctype": "WhatsApp Message",
 					"type": "Incoming",
 					"from": message['from'],
@@ -311,6 +316,7 @@ def post():
 					"whatsapp_account": whatsapp_account.name,
 					"product_catalog_json": json.dumps(order_data)
 				}).insert(ignore_permissions=True)
+				_publish_inbound_event(doc)
 			elif message_type in ["image", "audio", "video", "document"]:
 				token = whatsapp_account.get_password("token")
 				url = f"{whatsapp_account.url}/{whatsapp_account.version}/"
@@ -338,7 +344,7 @@ def post():
 				)
 				_publish_inbound_event(message_doc)
 			elif message_type == "button":
-				frappe.get_doc({
+				doc = frappe.get_doc({
 					"doctype": "WhatsApp Message",
 					"type": "Incoming",
 					"from": message['from'],
@@ -350,6 +356,7 @@ def post():
 					"profile_name":sender_profile_name,
 					"whatsapp_account":whatsapp_account.name
 				}).insert(ignore_permissions=True)
+				_publish_inbound_event(doc)
 			elif message_type == "location":
 				loc = message.get("location", {})
 				parts = [f"{loc.get('latitude')},{loc.get('longitude')}"]
