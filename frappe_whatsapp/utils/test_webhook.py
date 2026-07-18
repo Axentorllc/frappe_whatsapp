@@ -642,3 +642,109 @@ class TestHMACVerification(IntegrationTestCase):
                 self.assertFalse(_verify_webhook_signature())
         finally:
             self._clear_secret()
+
+
+class TestNewInboundTypes(IntegrationTestCase):
+    """Feature 4: location / contacts / sticker / unsupported inbound handlers."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        if not frappe.db.exists("WhatsApp Account", "Test WA Dedup Account"):
+            acc = frappe.get_doc({
+                "doctype": "WhatsApp Account",
+                "account_name": "Test WA Dedup Account",
+                "status": "Active",
+                "url": "https://graph.facebook.com",
+                "version": "v17.0",
+                "phone_id": "dedup_test_phone_id",
+                "business_id": "dedup_biz_id",
+                "app_id": "dedup_app_id",
+                "webhook_verify_token": "dedup_verify_token",
+                "is_default_incoming": 0,
+                "is_default_outgoing": 0,
+            })
+            acc.insert(ignore_permissions=True)
+            from frappe.utils.password import set_encrypted_password
+            set_encrypted_password("WhatsApp Account", acc.name, "dedup_token", "token")
+            frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture must be visible to later queries
+
+    def tearDown(self):
+        frappe.db.sql(
+            "DELETE FROM `tabWhatsApp Message` WHERE message_id LIKE 'wamid.NEWTYPE%'"
+        )
+        frappe.db.sql(
+            "DELETE FROM `tabWhatsApp Notification Log` WHERE template='Webhook'"
+        )
+        frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture must be visible to later queries
+
+    def _request(self):
+        mock_request = MagicMock()
+        mock_request.method = "POST"
+        mock_request.headers = {}
+        mock_request.get_data.return_value = b""
+        return mock_request
+
+    def _post(self, message):
+        from frappe_whatsapp.utils.webhook import webhook
+        payload = {
+            "entry": [{
+                "changes": [{
+                    "value": {
+                        "metadata": {"phone_number_id": "dedup_test_phone_id"},
+                        "contacts": [{"profile": {"name": "Test User"}}],
+                        "messages": [message],
+                    }
+                }]
+            }]
+        }
+        frappe.local.form_dict = frappe._dict(payload)
+        with patch("frappe_whatsapp.utils.webhook.frappe.request", self._request()):
+            webhook()
+
+    def test_location(self):
+        self._post({
+            "from": "201000000001",
+            "id": "wamid.NEWTYPE.location.001",
+            "type": "location",
+            "location": {"latitude": 30.0, "longitude": 31.0, "name": "Cairo", "address": "Downtown"},
+        })
+        msg = frappe.get_doc("WhatsApp Message", {"message_id": "wamid.NEWTYPE.location.001"})
+        self.assertEqual(msg.content_type, "location")
+        self.assertIn("30.0,31.0", msg.message)
+        self.assertIn("Cairo", msg.message)
+
+    def test_contacts(self):
+        self._post({
+            "from": "201000000001",
+            "id": "wamid.NEWTYPE.contacts.001",
+            "type": "contacts",
+            "contacts": [{
+                "name": {"formatted_name": "Jane Doe"},
+                "phones": [{"phone": "+100000000"}],
+            }],
+        })
+        msg = frappe.get_doc("WhatsApp Message", {"message_id": "wamid.NEWTYPE.contacts.001"})
+        self.assertEqual(msg.content_type, "contacts")
+        self.assertIn("Jane Doe", msg.message)
+
+    def test_sticker(self):
+        # Media download will fail (no live Meta) but must not raise.
+        self._post({
+            "from": "201000000001",
+            "id": "wamid.NEWTYPE.sticker.001",
+            "type": "sticker",
+            "sticker": {"id": "sticker_media_id"},
+        })
+        msg = frappe.get_doc("WhatsApp Message", {"message_id": "wamid.NEWTYPE.sticker.001"})
+        self.assertEqual(msg.content_type, "sticker")
+
+    def test_unsupported(self):
+        self._post({
+            "from": "201000000001",
+            "id": "wamid.NEWTYPE.unknown.001",
+            "type": "some_future_type",
+        })
+        msg = frappe.get_doc("WhatsApp Message", {"message_id": "wamid.NEWTYPE.unknown.001"})
+        self.assertEqual(msg.content_type, "unsupported")
+        self.assertIn("some_future_type", msg.message)

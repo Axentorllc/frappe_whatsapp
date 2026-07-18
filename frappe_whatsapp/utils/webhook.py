@@ -83,6 +83,63 @@ def _get_webhook_app_secret():
 	return None
 
 
+def _publish_inbound_event(doc):
+	"""Publish a generic inbound event for subscribers (chat UIs, apps)."""
+	frappe.publish_realtime(  # nosemgrep: frappe-realtime-pick-room -- site-wide fan-out; subscribers filter by 'from'
+		"whatsapp_message",
+		{"name": doc.name, "type": "Incoming", "from": doc.get("from")},
+		after_commit=True,
+	)
+
+
+def _download_and_attach_media(doc, media_id, media_type, token, base_url, filename_hint=None):
+	"""Download Meta media and attach to doc. Logs + notes on failure; never raises."""
+	headers = {"Authorization": "Bearer " + token}
+	logger = frappe.logger("frappe_whatsapp")
+	try:
+		response = requests.get(f"{base_url}{media_id}/", headers=headers, timeout=30)
+		if response.status_code != 200:
+			logger.error(
+				f"media metadata fetch failed: status={response.status_code} media_id={media_id}"
+			)
+			doc.db_set("message", (doc.message or "") + f" [Media download failed: HTTP {response.status_code}]")
+			return
+
+		media_data = response.json()
+		media_url = media_data.get("url")
+		mime_type = media_data.get("mime_type", "application/octet-stream")
+		file_extension = mime_type.split("/")[-1] if "/" in mime_type else "bin"
+
+		# Preserve original filename when Meta provides it; fall back to hash
+		if filename_hint:
+			file_name = filename_hint
+		else:
+			file_name = f"{frappe.generate_hash(length=10)}.{file_extension}"
+
+		media_response = requests.get(media_url, headers=headers, timeout=60)
+		if media_response.status_code != 200:
+			logger.error(
+				f"media content fetch failed: status={media_response.status_code} url={media_url}"
+			)
+			doc.db_set("message", (doc.message or "") + f" [Media download failed: HTTP {media_response.status_code}]")
+			return
+
+		file = frappe.get_doc({
+			"doctype": "File",
+			"file_name": file_name,
+			"attached_to_doctype": "WhatsApp Message",
+			"attached_to_name": doc.name,
+			"content": media_response.content,
+			"attached_to_field": "attach",
+		}).save(ignore_permissions=True)
+
+		doc.db_set("attach", file.file_url)
+
+	except Exception:
+		logger.exception(f"media download error for media_id={media_id}")
+		doc.db_set("message", (doc.message or "") + " [Media download error]")
+
+
 def post():
 	"""Post."""
 	# HMAC verification must happen first, over the raw body, before any
@@ -137,7 +194,7 @@ def post():
 			is_reply = True if message.get('context') and 'forwarded' not in message.get('context') else False
 			reply_to_message_id = message['context']['id'] if is_reply else None
 			if message_type == 'text':
-				frappe.get_doc({
+				doc = frappe.get_doc({
 					"doctype": "WhatsApp Message",
 					"type": "Incoming",
 					"from": message['from'],
@@ -148,7 +205,10 @@ def post():
 					"content_type":message_type,
 					"profile_name":sender_profile_name,
 					"whatsapp_account":whatsapp_account.name
-				}).insert(ignore_permissions=True)
+				})
+				if message.get("referral"):
+					doc.referral = json.dumps(message["referral"])
+				doc.insert(ignore_permissions=True)
 			elif message_type == 'reaction':
 				frappe.get_doc({
 					"doctype": "WhatsApp Message",
@@ -314,17 +374,85 @@ def post():
 					"profile_name":sender_profile_name,
 					"whatsapp_account":whatsapp_account.name
 				}).insert(ignore_permissions=True)
+			elif message_type == "location":
+				loc = message.get("location", {})
+				parts = [f"{loc.get('latitude')},{loc.get('longitude')}"]
+				if loc.get("name"):
+					parts.append(loc["name"])
+				if loc.get("address"):
+					parts.append(loc["address"])
+				doc = frappe.get_doc({
+					"doctype": "WhatsApp Message",
+					"type": "Incoming",
+					"from": message['from'],
+					"message": " | ".join(parts),
+					"message_id": message['id'],
+					"content_type": "location",
+					"profile_name": sender_profile_name,
+					"whatsapp_account": whatsapp_account.name,
+				})
+				if message.get("referral"):
+					doc.referral = json.dumps(message["referral"])
+				doc.insert(ignore_permissions=True)
+				_publish_inbound_event(doc)
+			elif message_type == "contacts":
+				parts = []
+				for c in message.get("contacts", []):
+					name_obj = c.get("name", {})
+					display = name_obj.get("formatted_name") or name_obj.get("first_name", "")
+					phones = [p.get("phone", "") for p in c.get("phones", [])]
+					parts.append(f"{display}: {', '.join(phones)}" if phones else display)
+				doc = frappe.get_doc({
+					"doctype": "WhatsApp Message",
+					"type": "Incoming",
+					"from": message['from'],
+					"message": "; ".join(parts) if parts else "[Contacts]",
+					"message_id": message['id'],
+					"content_type": "contacts",
+					"profile_name": sender_profile_name,
+					"whatsapp_account": whatsapp_account.name,
+				})
+				if message.get("referral"):
+					doc.referral = json.dumps(message["referral"])
+				doc.insert(ignore_permissions=True)
+				_publish_inbound_event(doc)
+			elif message_type == "sticker":
+				# Sticker is a media type — download like image
+				token = whatsapp_account.get_password("token")
+				url = f"{whatsapp_account.url}/{whatsapp_account.version}/"
+				media_id = message.get("sticker", {}).get("id")
+				doc = frappe.get_doc({
+					"doctype": "WhatsApp Message",
+					"type": "Incoming",
+					"from": message['from'],
+					"message": "",
+					"message_id": message['id'],
+					"content_type": "sticker",
+					"profile_name": sender_profile_name,
+					"whatsapp_account": whatsapp_account.name,
+				})
+				if message.get("referral"):
+					doc.referral = json.dumps(message["referral"])
+				doc.insert(ignore_permissions=True)
+				if media_id:
+					_download_and_attach_media(doc, media_id, "sticker", token, url)
+				_publish_inbound_event(doc)
 			else:
-				frappe.get_doc({
+				# Unsupported / unknown message type — persist placeholder, never drop
+				doc = frappe.get_doc({
 					"doctype": "WhatsApp Message",
 					"type": "Incoming",
 					"from": message['from'],
 					"message_id": message['id'],
-					"message": message[message_type].get(message_type),
-					"content_type" : message_type,
-					"profile_name":sender_profile_name,
-					"whatsapp_account":whatsapp_account.name
-				}).insert(ignore_permissions=True)
+					"message": f"[Unsupported message type: {message_type}]",
+					"content_type": "unsupported",
+					"profile_name": sender_profile_name,
+					"whatsapp_account": whatsapp_account.name,
+				})
+				if message.get("referral"):
+					doc.referral = json.dumps(message["referral"])
+				doc.insert(ignore_permissions=True)
+				_publish_inbound_event(doc)
 
 	else:
 		changes = None
