@@ -819,3 +819,145 @@ class TestMediaHardening(IntegrationTestCase):
 
         msg = frappe.get_doc("WhatsApp Message", {"message_id": "wamid.MEDIA.fail.001"})
         self.assertIn("Media download failed", msg.message)
+
+
+class TestFailedStatusSurfacing(IntegrationTestCase):
+    """Feature 6 (AHW-005): failed status persists error reason; realtime event fires;
+    superseding status clears status_error."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls._ensure_test_account()
+
+    @classmethod
+    def _ensure_test_account(cls):
+        if not frappe.db.exists("WhatsApp Account", "Test WA Webhook Account"):
+            account = frappe.get_doc({
+                "doctype": "WhatsApp Account",
+                "account_name": "Test WA Webhook Account",
+                "status": "Active",
+                "url": "https://graph.facebook.com",
+                "version": "v17.0",
+                "phone_id": "webhook_test_phone_id",
+                "business_id": "webhook_test_business_id",
+                "app_id": "webhook_test_app_id",
+                "webhook_verify_token": "webhook_test_verify_token",
+                "is_default_incoming": 1,
+                "is_default_outgoing": 1,
+            })
+            account.insert(ignore_permissions=True)
+            from frappe.utils.password import set_encrypted_password
+            set_encrypted_password("WhatsApp Account", account.name, "test_webhook_token", "token")
+            frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture
+
+    def _make_outgoing(self, message_id):
+        msg = frappe.get_doc({
+            "doctype": "WhatsApp Message",
+            "type": "Outgoing",
+            "to": "201000000001",
+            "message": "Test outgoing",
+            "message_id": message_id,
+            "content_type": "text",
+            "whatsapp_account": "Test WA Webhook Account",
+        })
+        msg.flags.ignore_validate = True
+        msg.db_insert()
+        frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture
+        return msg
+
+    def tearDown(self):
+        frappe.db.sql(
+            "DELETE FROM `tabWhatsApp Message` WHERE message_id LIKE 'wamid.FAILSTATUS%'"
+        )
+        frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture
+
+    def test_failed_status_persists_error_reason(self):
+        """status='failed' with errors array -> status_error contains reason."""
+        msg = self._make_outgoing("wamid.FAILSTATUS.001")
+
+        data = {
+            "statuses": [{
+                "id": "wamid.FAILSTATUS.001",
+                "status": "failed",
+                "errors": [{
+                    "code": 131047,
+                    "title": "Re-engagement message",
+                    "message": "More than 24 hours have passed.",
+                    "error_data": {"details": "Policy compliance"}
+                }]
+            }]
+        }
+        update_message_status(data)
+
+        msg.reload()
+        self.assertEqual(msg.status, "failed")
+        self.assertIsNotNone(msg.status_error)
+        self.assertIn("131047", msg.status_error)
+        self.assertIn("Re-engagement message", msg.status_error)
+
+    def test_failed_status_without_errors_sets_no_reason(self):
+        """status='failed' with no errors array -> status_error is None/empty."""
+        msg = self._make_outgoing("wamid.FAILSTATUS.002")
+
+        data = {
+            "statuses": [{
+                "id": "wamid.FAILSTATUS.002",
+                "status": "failed",
+            }]
+        }
+        update_message_status(data)
+
+        msg.reload()
+        self.assertEqual(msg.status, "failed")
+        self.assertFalse(msg.status_error)
+
+    def test_superseding_status_clears_error(self):
+        """A later non-failed status clears status_error (rare supersede case)."""
+        msg = self._make_outgoing("wamid.FAILSTATUS.003")
+
+        # First: failed with reason
+        data_failed = {
+            "statuses": [{
+                "id": "wamid.FAILSTATUS.003",
+                "status": "failed",
+                "errors": [{"code": 131047, "title": "Expired", "message": "Window closed"}]
+            }]
+        }
+        update_message_status(data_failed)
+        msg.reload()
+        self.assertTrue(msg.status_error)
+
+        # Then: delivered (supersedes)
+        data_delivered = {
+            "statuses": [{
+                "id": "wamid.FAILSTATUS.003",
+                "status": "delivered",
+            }]
+        }
+        update_message_status(data_delivered)
+        msg.reload()
+        self.assertEqual(msg.status, "delivered")
+        self.assertFalse(msg.status_error)
+
+    def test_status_event_published_on_update(self):
+        """publish_realtime is called with whatsapp_message_status event."""
+        msg = self._make_outgoing("wamid.FAILSTATUS.004")
+
+        data = {
+            "statuses": [{
+                "id": "wamid.FAILSTATUS.004",
+                "status": "sent",
+            }]
+        }
+
+        with patch("frappe_whatsapp.utils.webhook.frappe.publish_realtime") as mock_pub:
+            update_message_status(data)
+
+        # Find the whatsapp_message_status call among all realtime calls (other apps
+        # and Frappe internals may also fire publish_realtime during doc.save()).
+        status_calls = [c for c in mock_pub.call_args_list if c[0][0] == "whatsapp_message_status"]
+        self.assertEqual(len(status_calls), 1, "exactly one whatsapp_message_status event")
+        payload = status_calls[0][0][1]
+        self.assertEqual(payload["message_id"], "wamid.FAILSTATUS.004")
+        self.assertEqual(payload["status"], "sent")

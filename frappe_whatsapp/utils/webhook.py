@@ -540,7 +540,12 @@ def update_template_status(data):
 	)
 
 def update_message_status(data):
-	"""Update message status."""
+	"""Update message status from Meta statuses callback.
+
+	Persists status + failure reason (status_error) when Meta reports 'failed'.
+	Clears status_error on any later superseding status.
+	Publishes a generic realtime event for downstream consumers (e.g. status sync apps).
+	"""
 	id = data['statuses'][0]['id']
 	status = data['statuses'][0]['status']
 	conversation = data['statuses'][0].get('conversation', {}).get('id')
@@ -552,8 +557,34 @@ def update_message_status(data):
 		)
 		return
 
+	# Build compact human-readable failure reason from errors array when present.
+	# Clear on any status that is not 'failed' so superseded failures don't persist.
+	errors = data['statuses'][0].get('errors', [])
+	if status == 'failed' and errors:
+		err = errors[0]
+		reason = str(err.get('code', ''))
+		title = err.get('title') or err.get('message', '')
+		details = (err.get('error_data') or {}).get('details', '')
+		status_error = ': '.join(filter(None, [reason, title]))
+		if details:
+			status_error += f' — {details}'
+	else:
+		status_error = None
+
 	doc = frappe.get_doc("WhatsApp Message", name)
 	doc.status = status
 	if conversation:
 		doc.conversation_id = conversation
+	doc.status_error = status_error
 	doc.save(ignore_permissions=True)
+
+	frappe.publish_realtime(  # nosemgrep: frappe-realtime-pick-room -- site-wide fan-out; consumers filter by message_id
+		"whatsapp_message_status",
+		{
+			"name": doc.name,
+			"message_id": id,
+			"status": status,
+			"status_error": status_error,
+		},
+		after_commit=True,
+	)

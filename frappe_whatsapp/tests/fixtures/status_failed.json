@@ -1,0 +1,30 @@
+{
+  "object": "whatsapp_business_account",
+  "entry": [{
+    "id": "105549178979724",
+    "changes": [{
+      "value": {
+        "messaging_product": "whatsapp",
+        "metadata": {
+          "display_phone_number": "15550906846",
+          "phone_number_id": "103440175862012"
+        },
+        "statuses": [{
+          "id": "wamid.TEST.outbound.001",
+          "status": "failed",
+          "timestamp": "1784374000",
+          "recipient_id": "201000000001",
+          "errors": [{
+            "code": 131047,
+            "title": "Re-engagement message",
+            "message": "Message failed to send because more than 24 hours have passed since the customer last replied to this number.",
+            "error_data": {
+              "details": "Message was not delivered to maintain policy compliance"
+            }
+          }]
+        }]
+      },
+      "field": "messages"
+    }]
+  }]
+}

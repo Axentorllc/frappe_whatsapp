@@ -22,6 +22,7 @@
   "message_type",
   "message_id",
   "conversation_id",
+  "status_error",
   "content_type",
   "attach",
   "buttons",
@@ -137,6 +138,12 @@
    "fieldname": "conversation_id",
    "fieldtype": "Data",
    "label": "Conversation ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "status_error",
+   "fieldtype": "Small Text",
+   "label": "Status Error",
    "read_only": 1
   },
   {
@@ -288,7 +295,7 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-02-11 00:34:02.455955",
+ "modified": "2026-07-18 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Frappe Whatsapp",
  "name": "WhatsApp Message",
