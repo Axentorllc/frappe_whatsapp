@@ -300,6 +300,12 @@ def update_message_status(data):
 	conversation = data['statuses'][0].get('conversation', {}).get('id')
 	name = frappe.db.get_value("WhatsApp Message", filters={"message_id": id})
 
+	if not name:
+		frappe.logger("frappe_whatsapp").debug(
+			f"update_message_status: no WhatsApp Message for message_id={id!r}; skipping"
+		)
+		return
+
 	doc = frappe.get_doc("WhatsApp Message", name)
 	doc.status = status
 	if conversation:

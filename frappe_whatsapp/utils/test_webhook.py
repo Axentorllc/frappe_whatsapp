@@ -480,3 +480,17 @@ class TestWebhookEndpoint(IntegrationTestCase):
         # Should have created a notification log
         logs = frappe.get_all("WhatsApp Notification Log", filters={"template": "Webhook"})
         self.assertTrue(len(logs) > 0)
+
+
+class TestUnknownStatusNoOp(IntegrationTestCase):
+    """Feature 1: status for unknown message_id must not raise."""
+
+    def test_unknown_message_id_is_noop(self):
+        data = {
+            "statuses": [{
+                "id": "wamid.TEST.nonexistent.000",
+                "status": "delivered",
+            }]
+        }
+        # Must not raise — previously crashed with PermissionError on get_doc(None)
+        update_message_status(data)
