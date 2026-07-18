@@ -201,6 +201,10 @@ scheduler_events = {
 # ]
 
 
+default_log_clearing_doctypes = {
+    "WhatsApp Notification Log": 30,
+}
+
 doc_events = {
     "*": {
         "before_insert": "frappe_whatsapp.utils.run_server_script_for_doc_event",

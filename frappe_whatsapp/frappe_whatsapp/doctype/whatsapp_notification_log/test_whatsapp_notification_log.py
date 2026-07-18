@@ -2,6 +2,7 @@
 # See license.txt
 
 import frappe
+from frappe.utils import add_days
 from frappe_whatsapp.testing import IntegrationTestCase
 
 
@@ -52,3 +53,35 @@ class TestWhatsAppNotificationLog(IntegrationTestCase):
 
         stored_meta = json.loads(doc.meta_data)
         self.assertIn("error", stored_meta)
+
+    def test_clear_old_logs_purges_old_keeps_recent(self):
+        """clear_old_logs(30) deletes rows older than 30 days and keeps recent ones."""
+        from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_notification_log.whatsapp_notification_log import (
+            WhatsAppNotificationLog,
+        )
+
+        # Insert a stale row (31 days ago)
+        old_doc = frappe.get_doc({
+            "doctype": "WhatsApp Notification Log",
+            "template": "Test Log Retention Old",
+            "meta_data": "{}",
+        })
+        old_doc.insert(ignore_permissions=True)
+        frappe.db.set_value(
+            "WhatsApp Notification Log", old_doc.name, "creation", add_days(frappe.utils.now(), -31)
+        )
+
+        # Insert a recent row (today)
+        recent_doc = frappe.get_doc({
+            "doctype": "WhatsApp Notification Log",
+            "template": "Test Log Retention Recent",
+            "meta_data": "{}",
+        })
+        recent_doc.insert(ignore_permissions=True)
+        frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture must be visible to later queries
+
+        WhatsAppNotificationLog.clear_old_logs(days=30)
+        frappe.db.commit()  # nosemgrep: frappe-manual-commit -- flush purge before asserts
+
+        self.assertFalse(frappe.db.exists("WhatsApp Notification Log", old_doc.name), "old row must be purged")
+        self.assertTrue(frappe.db.exists("WhatsApp Notification Log", recent_doc.name), "recent row must survive")
