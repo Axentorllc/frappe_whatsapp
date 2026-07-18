@@ -16,6 +16,28 @@ from frappe_whatsapp.utils.webhook import (
 )
 
 
+def _ensure_dedup_test_account():
+    """Create 'Test WA Dedup Account' if absent. Shared by three test classes."""
+    if not frappe.db.exists("WhatsApp Account", "Test WA Dedup Account"):
+        acc = frappe.get_doc({
+            "doctype": "WhatsApp Account",
+            "account_name": "Test WA Dedup Account",
+            "status": "Active",
+            "url": "https://graph.facebook.com",
+            "version": "v17.0",
+            "phone_id": "dedup_test_phone_id",
+            "business_id": "dedup_biz_id",
+            "app_id": "dedup_app_id",
+            "webhook_verify_token": "dedup_verify_token",
+            "is_default_incoming": 0,
+            "is_default_outgoing": 0,
+        })
+        acc.insert(ignore_permissions=True)
+        from frappe.utils.password import set_encrypted_password
+        set_encrypted_password("WhatsApp Account", acc.name, "dedup_token", "token")
+        frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture must be visible to later queries
+
+
 class TestWebhookHelpers(IntegrationTestCase):
     """Tests for webhook helper functions."""
 
@@ -504,24 +526,7 @@ class TestMessageDedup(IntegrationTestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        if not frappe.db.exists("WhatsApp Account", "Test WA Dedup Account"):
-            acc = frappe.get_doc({
-                "doctype": "WhatsApp Account",
-                "account_name": "Test WA Dedup Account",
-                "status": "Active",
-                "url": "https://graph.facebook.com",
-                "version": "v17.0",
-                "phone_id": "dedup_test_phone_id",
-                "business_id": "dedup_biz_id",
-                "app_id": "dedup_app_id",
-                "webhook_verify_token": "dedup_verify_token",
-                "is_default_incoming": 0,
-                "is_default_outgoing": 0,
-            })
-            acc.insert(ignore_permissions=True)
-            from frappe.utils.password import set_encrypted_password
-            set_encrypted_password("WhatsApp Account", acc.name, "dedup_token", "token")
-            frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture must be visible to later queries
+        _ensure_dedup_test_account()
 
     def tearDown(self):
         frappe.db.sql(
@@ -529,6 +534,9 @@ class TestMessageDedup(IntegrationTestCase):
         )
         frappe.db.sql(
             "DELETE FROM `tabWhatsApp Notification Log` WHERE template='Webhook'"
+        )
+        frappe.db.sql(
+            "DELETE FROM `tabWhatsApp Profiles` WHERE number LIKE '201000000001'"
         )
         frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture must be visible to later queries
 
@@ -650,24 +658,7 @@ class TestNewInboundTypes(IntegrationTestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        if not frappe.db.exists("WhatsApp Account", "Test WA Dedup Account"):
-            acc = frappe.get_doc({
-                "doctype": "WhatsApp Account",
-                "account_name": "Test WA Dedup Account",
-                "status": "Active",
-                "url": "https://graph.facebook.com",
-                "version": "v17.0",
-                "phone_id": "dedup_test_phone_id",
-                "business_id": "dedup_biz_id",
-                "app_id": "dedup_app_id",
-                "webhook_verify_token": "dedup_verify_token",
-                "is_default_incoming": 0,
-                "is_default_outgoing": 0,
-            })
-            acc.insert(ignore_permissions=True)
-            from frappe.utils.password import set_encrypted_password
-            set_encrypted_password("WhatsApp Account", acc.name, "dedup_token", "token")
-            frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture must be visible to later queries
+        _ensure_dedup_test_account()
 
     def tearDown(self):
         frappe.db.sql(
@@ -675,6 +666,9 @@ class TestNewInboundTypes(IntegrationTestCase):
         )
         frappe.db.sql(
             "DELETE FROM `tabWhatsApp Notification Log` WHERE template='Webhook'"
+        )
+        frappe.db.sql(
+            "DELETE FROM `tabWhatsApp Profiles` WHERE number LIKE '201000000001'"
         )
         frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture must be visible to later queries
 
@@ -756,24 +750,7 @@ class TestMediaHardening(IntegrationTestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        if not frappe.db.exists("WhatsApp Account", "Test WA Dedup Account"):
-            acc = frappe.get_doc({
-                "doctype": "WhatsApp Account",
-                "account_name": "Test WA Dedup Account",
-                "status": "Active",
-                "url": "https://graph.facebook.com",
-                "version": "v17.0",
-                "phone_id": "dedup_test_phone_id",
-                "business_id": "dedup_biz_id",
-                "app_id": "dedup_app_id",
-                "webhook_verify_token": "dedup_verify_token",
-                "is_default_incoming": 0,
-                "is_default_outgoing": 0,
-            })
-            acc.insert(ignore_permissions=True)
-            from frappe.utils.password import set_encrypted_password
-            set_encrypted_password("WhatsApp Account", acc.name, "dedup_token", "token")
-            frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture must be visible to later queries
+        _ensure_dedup_test_account()
 
     def tearDown(self):
         frappe.db.sql(
@@ -781,6 +758,9 @@ class TestMediaHardening(IntegrationTestCase):
         )
         frappe.db.sql(
             "DELETE FROM `tabWhatsApp Notification Log` WHERE template='Webhook'"
+        )
+        frappe.db.sql(
+            "DELETE FROM `tabWhatsApp Profiles` WHERE number LIKE '201000000001'"
         )
         frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture must be visible to later queries
 
@@ -819,7 +799,8 @@ class TestMediaHardening(IntegrationTestCase):
     def test_media_preserves_filename(self):
         meta_resp = MagicMock(status_code=200)
         meta_resp.json.return_value = {"url": "https://media/x", "mime_type": "text/plain"}
-        content_resp = MagicMock(status_code=200, content=b"file body")
+        content_resp = MagicMock(status_code=200)
+        content_resp.iter_content.return_value = [b"file body"]
 
         with patch("frappe_whatsapp.utils.webhook.requests.get", side_effect=[meta_resp, content_resp]):
             self._post_document("wamid.MEDIA.fn.001", filename="invoice.txt")

@@ -130,7 +130,8 @@
    "fieldname": "message_id",
    "fieldtype": "Data",
    "label": "Message ID",
-   "read_only": 1
+   "read_only": 1,
+   "unique": 1
   },
   {
    "fieldname": "conversation_id",

@@ -18,6 +18,10 @@ _WINDOW_HOURS = 24
 def can_send_session_message(to_number):
 	"""Return window state for sending a session (non-template) message.
 
+	Restricted to System Manager to prevent IDOR — any authenticated user
+	probing any number's last-inbound timestamp would be an information leak.
+	Server-side callers (the glue app, running as Administrator) are unaffected.
+
 	Args:
 		to_number: recipient number in any format (+ prefix, spaces stripped).
 
@@ -27,6 +31,7 @@ def can_send_session_message(to_number):
 			window_expires_at (str|None): ISO datetime when window closes, or None.
 			last_inbound_at (str|None): ISO datetime of last inbound, or None.
 	"""
+	frappe.only_for("System Manager")
 	normalized = _normalize_number(to_number)
 
 	result = frappe.db.get_value(
