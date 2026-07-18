@@ -252,6 +252,28 @@ def post():
 					f"inbound: duplicate message_id={mid!r}; skipping"
 				)
 				continue
+			rl_limit = whatsapp_account.inbound_rate_limit_per_minute if whatsapp_account else 0
+			if rl_limit > 0:
+				from_number = message.get("from", "")
+				rl_key = frappe.cache.make_key(
+					f"frappe_whatsapp:inbound_rl:{whatsapp_account.name}:{from_number}"
+				)
+				try:
+					count = frappe.cache.get(rl_key)
+					if count is None:
+						frappe.cache.setex(rl_key, 60, 0)
+					count = frappe.cache.incrby(rl_key, 1)
+					if count > rl_limit:
+						frappe.logger("frappe_whatsapp").warning(
+							f"inbound rate limit exceeded: account={whatsapp_account.name!r} "
+							f"from={from_number!r} count={count} limit={rl_limit}"
+						)
+						continue  # skip; webhook still returns 200 so Meta never retries
+				except Exception:
+					frappe.logger("frappe_whatsapp").exception(
+						"inbound rate limit check failed; proceeding without limiting"
+					)
+			# ponytail: fixed-window counter; sliding window is overkill at this volume
 			try:
 				_process_inbound_message(message, whatsapp_account, sender_profile_name)
 			except frappe.exceptions.UniqueValidationError:

@@ -12,6 +12,7 @@
   "status",
   "token",
   "app_secret",
+  "inbound_rate_limit_per_minute",
   "url",
   "version",
   "webhook_verify_token",
@@ -34,6 +35,13 @@
    "fieldname": "app_secret",
    "fieldtype": "Password",
    "label": "App Secret"
+  },
+  {
+   "default": "0",
+   "description": "Max inbound messages per sender per minute; 0 disables.",
+   "fieldname": "inbound_rate_limit_per_minute",
+   "fieldtype": "Int",
+   "label": "Inbound Rate Limit (per minute)"
   },
   {
    "fieldname": "url",

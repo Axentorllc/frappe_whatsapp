@@ -9,6 +9,7 @@ from unittest.mock import patch, MagicMock, PropertyMock
 import frappe
 from frappe_whatsapp.testing import IntegrationTestCase
 
+from frappe_whatsapp.frappe_whatsapp.tests.account_snapshot import snapshot_defaults, restore_defaults
 from frappe_whatsapp.utils.webhook import (
     update_message_status,
     update_status,
@@ -1004,3 +1005,135 @@ class TestFailedStatusSurfacing(IntegrationTestCase):
         payload = status_calls[0][0][1]
         self.assertEqual(payload["message_id"], "wamid.FAILSTATUS.004")
         self.assertEqual(payload["status"], "sent")
+
+
+class TestInboundRateLimit(IntegrationTestCase):
+    """Feature 7: per-sender inbound rate limit via inbound_rate_limit_per_minute."""
+
+    _ACCOUNT = "Test WA Rate Limit Account"
+    _PHONE_ID = "rl_test_phone_id"
+    # Unique sender per test subrun so cross-run counter pollution can't happen
+    _FROM = "20100000RL01"
+    _RL_KEY_PREFIX = f"frappe_whatsapp:inbound_rl:{_ACCOUNT}:"
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls._acct_snap = snapshot_defaults()
+        if not frappe.db.exists("WhatsApp Account", cls._ACCOUNT):
+            acc = frappe.get_doc({
+                "doctype": "WhatsApp Account",
+                "account_name": cls._ACCOUNT,
+                "status": "Active",
+                "url": "https://graph.facebook.com",
+                "version": "v17.0",
+                "phone_id": cls._PHONE_ID,
+                "business_id": "rl_biz_id",
+                "app_id": "rl_app_id",
+                "webhook_verify_token": "rl_verify_token",
+                "is_default_incoming": 0,
+                "is_default_outgoing": 0,
+                "inbound_rate_limit_per_minute": 3,
+            })
+            acc.insert(ignore_permissions=True)
+            from frappe.utils.password import set_encrypted_password
+            set_encrypted_password(cls._ACCOUNT, cls._ACCOUNT, "rl_token", "token")
+            frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture
+
+    @classmethod
+    def tearDownClass(cls):
+        if frappe.db.exists("WhatsApp Account", cls._ACCOUNT):
+            frappe.delete_doc("WhatsApp Account", cls._ACCOUNT, force=True, ignore_permissions=True)
+            frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture cleanup
+        restore_defaults(cls._acct_snap)
+        super().tearDownClass()
+
+    def _rl_key(self, from_number):
+        return frappe.cache.make_key(f"frappe_whatsapp:inbound_rl:{self._ACCOUNT}:{from_number}")
+
+    def _clear_rl_key(self, from_number):
+        try:
+            frappe.cache.delete(self._rl_key(from_number))
+        except Exception:
+            pass
+
+    def _request(self):
+        mock = MagicMock()
+        mock.method = "POST"
+        mock.headers = {}
+        mock.get_data.return_value = b""
+        return mock
+
+    def _post_messages(self, messages, from_number=None):
+        from frappe_whatsapp.utils.webhook import webhook
+        payload = {
+            "entry": [{
+                "changes": [{
+                    "value": {
+                        "metadata": {"phone_number_id": self._PHONE_ID},
+                        "contacts": [{"profile": {"name": "RL Test"}}],
+                        "messages": messages,
+                    }
+                }]
+            }]
+        }
+        frappe.local.form_dict = frappe._dict(payload)
+        with patch("frappe_whatsapp.utils.webhook.frappe.request", self._request()):
+            webhook()
+
+    def tearDown(self):
+        frappe.db.sql(
+            "DELETE FROM `tabWhatsApp Message` WHERE message_id LIKE 'wamid.RL%'"
+        )
+        frappe.db.sql(
+            "DELETE FROM `tabWhatsApp Notification Log` WHERE template='Webhook'"
+        )
+        # Clear all RL keys for this account's test senders
+        for from_num in ("20100000RLA", "20100000RLB", "20100000RLC"):
+            self._clear_rl_key(from_num)
+        frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture cleanup
+
+    def test_within_limit_all_messages_created(self):
+        """Messages at or below limit (3) are all persisted."""
+        from_num = "20100000RLA"
+        self._clear_rl_key(from_num)
+        msgs = [
+            {"from": from_num, "id": f"wamid.RL.within.{i:03d}", "type": "text", "text": {"body": f"msg {i}"}}
+            for i in range(3)
+        ]
+        self._post_messages(msgs)
+        count = frappe.db.count("WhatsApp Message", filters={"message_id": ["like", "wamid.RL.within.%"]})
+        self.assertEqual(count, 3)
+
+    def test_over_limit_only_n_rows_created_response_200(self):
+        """Messages beyond limit are skipped; existing rows still ≤ limit."""
+        from_num = "20100000RLB"
+        self._clear_rl_key(from_num)
+        msgs = [
+            {"from": from_num, "id": f"wamid.RL.over.{i:03d}", "type": "text", "text": {"body": f"msg {i}"}}
+            for i in range(5)
+        ]
+        self._post_messages(msgs)
+        count = frappe.db.count("WhatsApp Message", filters={"message_id": ["like", "wamid.RL.over.%"]})
+        self.assertEqual(count, 3)
+
+    def test_limit_zero_is_unlimited(self):
+        """When inbound_rate_limit_per_minute=0, no throttling occurs."""
+        # Temporarily set limit to 0 on the account
+        frappe.db.set_value("WhatsApp Account", self._ACCOUNT, "inbound_rate_limit_per_minute", 0)
+        frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture
+        frappe.clear_document_cache("WhatsApp Account", self._ACCOUNT)
+        from_num = "20100000RLC"
+        self._clear_rl_key(from_num)
+        try:
+            msgs = [
+                {"from": from_num, "id": f"wamid.RL.unlim.{i:03d}", "type": "text", "text": {"body": f"msg {i}"}}
+                for i in range(5)
+            ]
+            self._post_messages(msgs)
+            count = frappe.db.count("WhatsApp Message", filters={"message_id": ["like", "wamid.RL.unlim.%"]})
+            self.assertEqual(count, 5)
+        finally:
+            frappe.db.set_value("WhatsApp Account", self._ACCOUNT, "inbound_rate_limit_per_minute", 3)
+            frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture restore
+            frappe.clear_document_cache("WhatsApp Account", self._ACCOUNT)
