@@ -3,10 +3,21 @@
 
 import frappe
 from frappe_whatsapp.testing import IntegrationTestCase
+from frappe_whatsapp.frappe_whatsapp.tests.account_snapshot import snapshot_defaults, restore_defaults
 
 
 class TestWhatsAppAccount(IntegrationTestCase):
     """Tests for WhatsApp Account doctype."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls._acct_snap = snapshot_defaults()
+
+    @classmethod
+    def tearDownClass(cls):
+        restore_defaults(cls._acct_snap)
+        super().tearDownClass()
 
     def setUp(self):
         # Clean up any existing test accounts

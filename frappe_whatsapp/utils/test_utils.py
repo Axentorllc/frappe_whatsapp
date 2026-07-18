@@ -13,6 +13,7 @@ from frappe_whatsapp.utils import (
     run_server_script_for_doc_event,
     trigger_whatsapp_notifications,
 )
+from frappe_whatsapp.frappe_whatsapp.tests.account_snapshot import snapshot_defaults, restore_defaults
 
 
 class TestFormatNumber(IntegrationTestCase):
@@ -34,12 +35,7 @@ class TestGetWhatsAppAccount(IntegrationTestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        cls._prior_default_incoming = frappe.db.get_value(
-            "WhatsApp Account", {"is_default_incoming": 1}, "name"
-        )
-        cls._prior_default_outgoing = frappe.db.get_value(
-            "WhatsApp Account", {"is_default_outgoing": 1}, "name"
-        )
+        cls._acct_snap = snapshot_defaults()
         cls._ensure_test_accounts()
 
     @classmethod
@@ -65,11 +61,7 @@ class TestGetWhatsAppAccount(IntegrationTestCase):
     def tearDownClass(cls):
         if frappe.db.exists("WhatsApp Account", "Test Utils Account"):
             frappe.delete_doc("WhatsApp Account", "Test Utils Account", force=True, ignore_permissions=True)
-        if cls._prior_default_incoming and frappe.db.exists("WhatsApp Account", cls._prior_default_incoming):
-            frappe.db.set_value("WhatsApp Account", cls._prior_default_incoming, "is_default_incoming", 1)
-        if cls._prior_default_outgoing and frappe.db.exists("WhatsApp Account", cls._prior_default_outgoing):
-            frappe.db.set_value("WhatsApp Account", cls._prior_default_outgoing, "is_default_outgoing", 1)
-        frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture cleanup
+        restore_defaults(cls._acct_snap)
         super().tearDownClass()
 
     def setUp(self):
