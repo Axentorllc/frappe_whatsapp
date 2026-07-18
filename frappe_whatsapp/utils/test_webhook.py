@@ -748,3 +748,93 @@ class TestNewInboundTypes(IntegrationTestCase):
         msg = frappe.get_doc("WhatsApp Message", {"message_id": "wamid.NEWTYPE.unknown.001"})
         self.assertEqual(msg.content_type, "unsupported")
         self.assertIn("some_future_type", msg.message)
+
+
+class TestMediaHardening(IntegrationTestCase):
+    """Feature 5: media download hardening + filename preservation."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        if not frappe.db.exists("WhatsApp Account", "Test WA Dedup Account"):
+            acc = frappe.get_doc({
+                "doctype": "WhatsApp Account",
+                "account_name": "Test WA Dedup Account",
+                "status": "Active",
+                "url": "https://graph.facebook.com",
+                "version": "v17.0",
+                "phone_id": "dedup_test_phone_id",
+                "business_id": "dedup_biz_id",
+                "app_id": "dedup_app_id",
+                "webhook_verify_token": "dedup_verify_token",
+                "is_default_incoming": 0,
+                "is_default_outgoing": 0,
+            })
+            acc.insert(ignore_permissions=True)
+            from frappe.utils.password import set_encrypted_password
+            set_encrypted_password("WhatsApp Account", acc.name, "dedup_token", "token")
+            frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture must be visible to later queries
+
+    def tearDown(self):
+        frappe.db.sql(
+            "DELETE FROM `tabWhatsApp Message` WHERE message_id LIKE 'wamid.MEDIA%'"
+        )
+        frappe.db.sql(
+            "DELETE FROM `tabWhatsApp Notification Log` WHERE template='Webhook'"
+        )
+        frappe.db.commit()  # nosemgrep: frappe-manual-commit -- test fixture must be visible to later queries
+
+    def _request(self):
+        mock_request = MagicMock()
+        mock_request.method = "POST"
+        mock_request.headers = {}
+        mock_request.get_data.return_value = b""
+        return mock_request
+
+    def _post_document(self, message_id, filename=None):
+        from frappe_whatsapp.utils.webhook import webhook
+        doc_field = {"id": "media_id_123", "caption": "a caption"}
+        if filename:
+            doc_field["filename"] = filename
+        payload = {
+            "entry": [{
+                "changes": [{
+                    "value": {
+                        "metadata": {"phone_number_id": "dedup_test_phone_id"},
+                        "contacts": [{"profile": {"name": "Test User"}}],
+                        "messages": [{
+                            "from": "201000000001",
+                            "id": message_id,
+                            "type": "document",
+                            "document": doc_field,
+                        }],
+                    }
+                }]
+            }]
+        }
+        frappe.local.form_dict = frappe._dict(payload)
+        with patch("frappe_whatsapp.utils.webhook.frappe.request", self._request()):
+            webhook()
+
+    def test_media_preserves_filename(self):
+        meta_resp = MagicMock(status_code=200)
+        meta_resp.json.return_value = {"url": "https://media/x", "mime_type": "text/plain"}
+        content_resp = MagicMock(status_code=200, content=b"file body")
+
+        with patch("frappe_whatsapp.utils.webhook.requests.get", side_effect=[meta_resp, content_resp]):
+            self._post_document("wamid.MEDIA.fn.001", filename="invoice.txt")
+
+        msg = frappe.get_doc("WhatsApp Message", {"message_id": "wamid.MEDIA.fn.001"})
+        self.assertTrue(msg.attach)
+        f = frappe.get_doc("File", {"attached_to_name": msg.name, "attached_to_doctype": "WhatsApp Message"})
+        self.assertEqual(f.file_name, "invoice.txt")
+
+    def test_media_download_failure_is_graceful(self):
+        # Metadata fetch returns non-200; message must still persist with a note.
+        meta_resp = MagicMock(status_code=500)
+
+        with patch("frappe_whatsapp.utils.webhook.requests.get", return_value=meta_resp):
+            self._post_document("wamid.MEDIA.fail.001")
+
+        msg = frappe.get_doc("WhatsApp Message", {"message_id": "wamid.MEDIA.fail.001"})
+        self.assertIn("Media download failed", msg.message)

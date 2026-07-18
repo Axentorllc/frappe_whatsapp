@@ -314,53 +314,29 @@ def post():
 			elif message_type in ["image", "audio", "video", "document"]:
 				token = whatsapp_account.get_password("token")
 				url = f"{whatsapp_account.url}/{whatsapp_account.version}/"
-
 				media_id = message[message_type]["id"]
-				headers = {
-					'Authorization': 'Bearer ' + token
+				original_filename = message[message_type].get("filename")  # preserve if present
 
-				}
-				response = requests.get(f'{url}{media_id}/', headers=headers)
-
-				if response.status_code == 200:
-					media_data = response.json()
-					media_url = media_data.get("url")
-					mime_type = media_data.get("mime_type")
-					file_extension = mime_type.split('/')[1]
-
-					media_response = requests.get(media_url, headers=headers)
-					if media_response.status_code == 200:
-
-						file_data = media_response.content
-						file_name = f"{frappe.generate_hash(length=10)}.{file_extension}"
-
-						message_doc = frappe.get_doc({
-							"doctype": "WhatsApp Message",
-							"type": "Incoming",
-							"from": message['from'],
-							"message_id": message['id'],
-							"reply_to_message_id": reply_to_message_id,
-							"is_reply": is_reply,
-							"message": message[message_type].get("caption", ""),
-							"content_type" : message_type,
-							"profile_name":sender_profile_name,
-							"whatsapp_account":whatsapp_account.name
-						}).insert(ignore_permissions=True)
-
-						file = frappe.get_doc(
-							{
-								"doctype": "File",
-								"file_name": file_name,
-								"attached_to_doctype": "WhatsApp Message",
-								"attached_to_name": message_doc.name,
-								"content": file_data,
-								"attached_to_field": "attach"
-							}
-						).save(ignore_permissions=True)
-
-
-						message_doc.attach = file.file_url
-						message_doc.save()
+				message_doc = frappe.get_doc({
+					"doctype": "WhatsApp Message",
+					"type": "Incoming",
+					"from": message['from'],
+					"message_id": message['id'],
+					"reply_to_message_id": reply_to_message_id,
+					"is_reply": is_reply,
+					"message": message[message_type].get("caption", ""),
+					"content_type": message_type,
+					"profile_name": sender_profile_name,
+					"whatsapp_account": whatsapp_account.name,
+				})
+				if message.get("referral"):
+					message_doc.referral = json.dumps(message["referral"])
+				message_doc.insert(ignore_permissions=True)
+				_download_and_attach_media(
+					message_doc, media_id, message_type, token, url,
+					filename_hint=original_filename,
+				)
+				_publish_inbound_event(message_doc)
 			elif message_type == "button":
 				frappe.get_doc({
 					"doctype": "WhatsApp Message",
